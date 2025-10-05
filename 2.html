@@ -127,6 +127,9 @@
       .wrap{grid-template-columns:1fr; padding-bottom:120px}
     }
 
+    /* Settings modal card should fit on small screens and be scrollable */
+    #settingsModal .card{ max-height: calc(100vh - 80px); overflow:auto }
+
     footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
     .top-right{display:flex;gap:8px;align-items:center}
   .small{font-size:12px;color:var(--muted)}
@@ -141,17 +144,21 @@
 </head>
 <body>
   <div id="app">
-    <div style="position:fixed;top:10px;right:10px;z-index:10000">
-      <button class="btn" id="googleLoginBtn">Sign in with Google</button>
-      <span id="firebaseUserInfo" class="muted"></span>
-    </div>
-    <!-- Lock Screen (overlay) -->
-    <div id="lockScreen">
+    <div id="homeScreen">
+      <div style="position:fixed;top:10px;right:10px;z-index:10000">
+        <button class="btn" id="googleLoginBtn">Sign in with Google</button>
+        <span id="firebaseUserInfo" class="muted"></span>
+      </div>
+      <!-- Lock Screen (overlay) -->
+      <div id="lockScreen">
       <div class="card lockBox">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <h2 style="margin:0">Lock Diary</h2>
-            <p class="lead">Enter your lock to continue</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="mark"><img src="https://i.postimg.cc/1Xk9bjC2/Copilot-20250921-112342.png" alt="logo" style="width:44px;height:44px;border-radius:8px;object-fit:cover"></div>
+            <div>
+              <h2 style="margin:0">Lock Diary</h2>
+              <p class="lead">Enter your lock to continue</p>
+            </div>
           </div>
           <div class="top-right">
             <div class="small">Local only • No servers</div>
@@ -181,11 +188,12 @@
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="btn primary" id="unlockBtn">Unlock</button>
             <button class="btn" id="clearBtn">Clear</button>
-            <button class="btn" id="goSettingsBtn">Settings</button>
+            <button class="btn" id="goSettingsBtn">Set PIN</button>
           </div>
 
           <div id="lockMsg" class="muted" style="margin-top:8px"></div>
         </div>
+      </div>
       </div>
     </div>
 
@@ -194,10 +202,9 @@
       <div>
         <header class="card">
           <div class="logo">
-            <div class="mark">LD</div>
+            <div class="mark"><img src="https://i.postimg.cc/1Xk9bjC2/Copilot-20250921-112342.png" alt="logo" style="width:44px;height:44px;border-radius:8px;object-fit:cover"></div>
             <div>
               <h1>Lock Diary</h1>
-              
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -251,8 +258,8 @@
       </div>
     </div>
 
-    <!-- Settings Modal (simple) -->
-    <div id="settingsModal" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;padding:20px;z-index:999">
+  <!-- Settings Modal (simple overlay) -->
+  <div id="settingsModal" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;padding:20px;z-index:10001;background:rgba(0,0,0,0.6)">
       <div class="card" style="max-width:640px;width:100%">
         <h3 style="margin-top:0">Settings — Locks</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -303,16 +310,20 @@
   const firebaseUserInfo = document.getElementById('firebaseUserInfo');
   function updateFirebaseUserInfo(user) {
     if (user) {
+      isSignedIn = true;
       firebaseUserInfo.textContent = `Signed in: ${user.displayName || user.email}`;
       googleLoginBtn.style.display = 'none';
       document.getElementById('userTag').textContent = user.displayName || user.email || 'Google User';
       document.getElementById('signOutBtn').style.display = '';
     } else {
+      isSignedIn = false;
       firebaseUserInfo.textContent = '';
       googleLoginBtn.style.display = '';
       document.getElementById('userTag').textContent = 'Local User';
       document.getElementById('signOutBtn').style.display = 'none';
     }
+    // Signing in does not unlock the app. Just sync UI visibility if needed.
+    checkAccess();
   }
   auth.onAuthStateChanged(updateFirebaseUserInfo);
   googleLoginBtn.onclick = function() {
@@ -370,6 +381,10 @@
     draft: LS.get('ld_draft', {title:'', content:'', image:null})
   };
 
+  // Explicit flags requested
+  let isUnlocked = false;
+  let isSignedIn = false;
+
   /* =========================
      Lock screen logic
      ========================= */
@@ -422,35 +437,64 @@
     LS.set('lock_'+type, hexHash);
   }
 
-  // check if locks exist; if none, bypass lock
-  (async ()=>{
+  // Check access and lock availability
+  // Returns true if any lock exists
+  async function updateLockAvailability(){
     const pin = await getSavedLock('pin'), pw = await getSavedLock('password'), pat = await getSavedLock('pattern');
-    if(!pin && !pw && !pat){
-      // no lock configured -> auto-unlock
-      unlockApp();
+    const unlockBtn = $('#unlockBtn');
+    const any = !!(pin || pw || pat);
+    if(!any){
+      // No locks set -> disable unlock and show startup message
+      if(unlockBtn) unlockBtn.disabled = true;
+      lockMsg.textContent = 'Please set a lock first.';
+      // change Settings button to 'Set PIN' on the lock screen
+      const settingsBtn = document.getElementById('goSettingsBtn');
+      if(settingsBtn) settingsBtn.textContent = 'Set PIN';
     } else {
-      // If already unlocked in previous session, show main UI
-      if(appState.unlocked){
-        unlockApp();
-      }
+      if(unlockBtn) unlockBtn.disabled = false;
+      lockMsg.textContent = 'Enter your lock to continue.';
+      const settingsBtn = document.getElementById('goSettingsBtn');
+      if(settingsBtn) settingsBtn.textContent = 'Settings';
     }
-  })();
+    return any;
+  }
+
+  function checkAccess(){
+    // Show main UI only when unlocked
+    if(isUnlocked === true){
+      // hide home screen and show main UI
+      const home = document.getElementById('homeScreen');
+      if(home) home.style.display = 'none';
+      if(mainUI) mainUI.style.display = 'grid';
+      renderEntries();
+      loadDraftToUI();
+    } else {
+      // ensure main UI hidden and home shown
+      if(mainUI) mainUI.style.display = 'none';
+      const home = document.getElementById('homeScreen');
+      if(home) home.style.display = 'block';
+    }
+  }
 
   async function tryUnlock(){
     lockMsg.textContent = '';
     try{
+      // ensure at least one lock exists
+      const pinStored = await getSavedLock('pin'), pwStored = await getSavedLock('password'), patStored = await getSavedLock('pattern');
+      if(!pinStored && !pwStored && !patStored){ lockMsg.textContent = 'No lock set. Please configure a PIN, password, or pattern in Settings.'; return }
+
       if(appState.mode === 'pin'){
-        const stored = await getSavedLock('pin');
+        const stored = pinStored;
         if(!stored){ lockMsg.textContent = 'No PIN set. Go to Settings.'; return }
         const h = await sha256Hex(pinInput.value || '');
         if(h === stored){ unlockApp(); } else lockMsg.textContent = 'Wrong PIN';
       } else if(appState.mode === 'password'){
-        const stored = await getSavedLock('password');
+        const stored = pwStored;
         if(!stored){ lockMsg.textContent = 'No password set. Go to Settings.'; return }
         const h = await sha256Hex(pwInput.value || '');
         if(h === stored){ unlockApp(); } else lockMsg.textContent = 'Wrong password';
       } else {
-        const stored = await getSavedLock('pattern');
+        const stored = patStored;
         const curr = appState.pattern.join('-');
         if(!stored){ lockMsg.textContent = 'No pattern saved. Go to Settings.'; return }
         const h = await sha256Hex(curr);
@@ -465,11 +509,9 @@
   }
 
   function unlockApp(){
+    isUnlocked = true;
     appState.unlocked = true;
-    lockScreen.style.display = 'none';
-    mainUI.style.display = 'grid';
-    renderEntries();
-    loadDraftToUI();
+    checkAccess();
   }
 
   // Settings modal handlers
@@ -483,6 +525,12 @@
     await setSavedLock('pin', await sha256Hex(v));
     alert('PIN saved locally.');
     $('#setPin').value='';
+  const any = await updateLockAvailability();
+  // close settings and update UI
+  const modal = document.getElementById('settingsModal'); if(modal) modal.style.display = 'none';
+  const unlockBtn = $('#unlockBtn'); if(unlockBtn) unlockBtn.disabled = !any;
+  const settingsBtn = document.getElementById('goSettingsBtn'); if(settingsBtn) settingsBtn.textContent = 'Settings';
+  lockMsg.textContent = 'Enter your lock to continue.';
   }
   $('#savePasswordBtn').onclick = async ()=>{
     const v = $('#setPassword').value.trim();
@@ -490,12 +538,22 @@
     await setSavedLock('password', await sha256Hex(v));
     alert('Password saved locally.');
     $('#setPassword').value='';
+  const any = await updateLockAvailability();
+  const modal = document.getElementById('settingsModal'); if(modal) modal.style.display = 'none';
+  const unlockBtn = $('#unlockBtn'); if(unlockBtn) unlockBtn.disabled = !any;
+  const settingsBtn = document.getElementById('goSettingsBtn'); if(settingsBtn) settingsBtn.textContent = 'Settings';
+  lockMsg.textContent = 'Enter your lock to continue.';
   }
   $('#savePatternBtn').onclick = async ()=>{
     if(appState.pattern.length < 4) { alert('Pattern too short (min 4 nodes)'); return }
     const h = await sha256Hex(appState.pattern.join('-'));
     await setSavedLock('pattern', h);
     alert('Pattern saved locally.');
+  const any = await updateLockAvailability();
+  const modal = document.getElementById('settingsModal'); if(modal) modal.style.display = 'none';
+  const unlockBtn = $('#unlockBtn'); if(unlockBtn) unlockBtn.disabled = !any;
+  const settingsBtn = document.getElementById('goSettingsBtn'); if(settingsBtn) settingsBtn.textContent = 'Settings';
+  lockMsg.textContent = 'Enter your lock to continue.';
   }
   $('#clearPatternBtn').onclick = ()=>{
     appState.pattern=[]; $all('.dot').forEach(d=>d.classList.remove('active')); alert('Pattern cleared (local state only).')
@@ -695,22 +753,14 @@
     // intentionally left blank - preview already shown in right column by live typing
   });
 
-  // If user unlocked by no locks configured earlier we already called unlockApp()
-  // But in case lock was hidden due to direct opening, ensure main UI remains hidden until unlocked
-  if(!appState.unlocked){
-    // For testing, if no lock is set, show main UI
-    const pin = LS.get('lock_pin', null), pw = LS.get('lock_password', null), pat = LS.get('lock_pattern', null);
-    if(!pin && !pw && !pat){
-      mainUI.style.display = 'grid';
-      lockScreen.style.display = 'none';
-    } else {
-      mainUI.style.display = 'none';
-      lockScreen.style.display = 'flex';
-    }
-  } else {
-    mainUI.style.display = 'grid';
-    lockScreen.style.display = 'none';
-  }
+  // On load: ensure lock availability and UI are synced. Do NOT auto-unlock.
+  (async ()=>{
+    const any = await updateLockAvailability();
+    checkAccess();
+    // Ensure the lock-screen button text reflects state on load
+    const settingsBtn = document.getElementById('goSettingsBtn');
+    if(settingsBtn) settingsBtn.textContent = any ? 'Settings' : 'Set PIN';
+  })();
 
   // load saved pattern hash into UI? not necessary - pattern is local
   </script>
